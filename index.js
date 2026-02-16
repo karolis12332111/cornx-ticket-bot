@@ -1,18 +1,20 @@
-require('dotenv').config();
+require("dotenv").config();
 
 const {
   Client,
   GatewayIntentBits,
   PermissionsBitField,
-  EmbedBuilder,
+  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType,
+  StringSelectMenuBuilder,
+  EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
-} = require('discord.js');
+  TextInputStyle,
+  AttachmentBuilder
+} = require("discord.js");
 
 const client = new Client({
   intents: [
@@ -23,167 +25,204 @@ const client = new Client({
   ]
 });
 
-const CATEGORY_ID = "PAKEISK_I_CATEGORY_ID"; // <-- Įrašyk savo category ID
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID;
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
+const CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
 
-client.once("ready", () => {
+let ticketCounter = 0;
+
+client.once("ready", async () => {
   console.log(`🔥 ${client.user.tag} online`);
+
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  await guild.commands.create({
+    name: "panel",
+    description: "Open the support panel"
+  });
 });
 
-client.on("messageCreate", async message => {
-  if (message.content === "!panel") {
-
-    const embed = new EmbedBuilder()
-      .setColor("#2b2d31")
-      .setTitle("🛒 Purchase Setup")
-      .setDescription(`Select your payment, region, and budget below, then press Create Ticket.
-
-**Supported Payments:**
-Crypto (BTC, ETH, LTC, USDT, SOL), PayPal (F&F), Credit/Debit, Apple Pay, Google Pay, Skrill, Cash Card
-
-**Gift Card Payments:**
-Paysafecard (DE), Amazon (DE), Cryptovoucher`)
-      .setImage("https://i.imgur.com/1XKQ9wS.png");
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("purchase")
-        .setLabel("Purchase")
-        .setStyle(ButtonStyle.Success)
-        .setEmoji("🛒"),
-
-      new ButtonBuilder()
-        .setCustomId("support")
-        .setLabel("Support")
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji("🎮"),
-
-      new ButtonBuilder()
-        .setCustomId("other")
-        .setLabel("Other")
-        .setStyle(ButtonStyle.Secondary)
-        .setEmoji("❓")
-    );
-
-    message.channel.send({ embeds: [embed], components: [row] });
-  }
-});
+/* ================= INTERACTIONS ================= */
 
 client.on("interactionCreate", async interaction => {
 
-  // CREATE TICKET
-  if (interaction.isButton()) {
+  /* PANEL COMMAND */
 
-    if (["purchase", "support", "other"].includes(interaction.customId)) {
+  if (interaction.isChatInputCommand()) {
 
-      const channel = await interaction.guild.channels.create({
-        name: `ticket-${interaction.user.username}`,
-        type: ChannelType.GuildText,
-        parent: CATEGORY_ID,
-        permissionOverwrites: [
-          {
-            id: interaction.guild.id,
-            deny: [PermissionsBitField.Flags.ViewChannel]
-          },
-          {
-            id: interaction.user.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-          }
-        ]
-      });
+    const embed = new EmbedBuilder()
+      .setColor("#2b2d31")
+      .setTitle("🎫 Support Center")
+      .setDescription(`
+Select the category below:
 
-      const embed = new EmbedBuilder()
-        .setColor("Green")
-        .setTitle("🎫 Ticket Created")
-        .setDescription("Staff will assist you shortly.");
+🛒 **Purchase** – Buy products or services  
+🛠 **Support** – Need help  
+🚨 **Report** – Report issues  
+      `)
+      .setFooter({ text: `${interaction.guild.name} • Ticket System` });
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("close")
-          .setLabel("Close")
-          .setStyle(ButtonStyle.Danger),
+    const menu = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("create_ticket")
+        .setPlaceholder("Choose a category")
+        .addOptions([
+          { label: "Purchase", value: "purchase" },
+          { label: "Support", value: "support" },
+          { label: "Report", value: "report" }
+        ])
+    );
 
-        new ButtonBuilder()
-          .setCustomId("add")
-          .setLabel("Add Member")
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId("rename")
-          .setLabel("Rename")
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed], components: [row] });
-
-      interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
-    }
-
-    // CLOSE
-    if (interaction.customId === "close") {
-
-      const messages = await interaction.channel.messages.fetch({ limit: 100 });
-      let transcript = messages
-        .reverse()
-        .map(m => `${m.author.tag}: ${m.content}`)
-        .join("\n");
-
-      try {
-        await interaction.user.send(`📄 Ticket Transcript:\n\n${transcript}`);
-      } catch (err) {}
-
-      await interaction.channel.delete();
-    }
-
-    // ADD MEMBER
-    if (interaction.customId === "add") {
-      interaction.reply({ content: "Mention the user you want to add.", ephemeral: true });
-    }
-
-    // RENAME MODAL
-    if (interaction.customId === "rename") {
-
-      const modal = new ModalBuilder()
-        .setCustomId("renameModal")
-        .setTitle("Rename Ticket");
-
-      const input = new TextInputBuilder()
-        .setCustomId("newName")
-        .setLabel("New Channel Name")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const row = new ActionRowBuilder().addComponents(input);
-      modal.addComponents(row);
-
-      await interaction.showModal(modal);
-    }
+    return interaction.reply({ embeds: [embed], components: [menu] });
   }
 
-  // HANDLE RENAME
-  if (interaction.isModalSubmit()) {
-    if (interaction.customId === "renameModal") {
+  /* CREATE TICKET */
 
-      const newName = interaction.fields.getTextInputValue("newName");
+  if (interaction.isStringSelectMenu()) {
 
-      await interaction.channel.setName(newName);
-      interaction.reply({ content: "Channel renamed!", ephemeral: true });
-    }
+    const existing = interaction.guild.channels.cache.find(
+      c => c.topic === interaction.user.id
+    );
+
+    if (existing)
+      return interaction.reply({ content: "❌ You already have an open ticket.", ephemeral: true });
+
+    ticketCounter++;
+    const number = String(ticketCounter).padStart(4, "0");
+
+    const channel = await interaction.guild.channels.create({
+      name: `ticket-${number}`,
+      type: ChannelType.GuildText,
+      parent: CATEGORY_ID || null,
+      topic: interaction.user.id,
+      permissionOverwrites: [
+        { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+        { id: STAFF_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      ]
+    });
+
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("claim").setLabel("Claim").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("rename").setLabel("Rename").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("add").setLabel("Add Member").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("close").setLabel("Close").setStyle(ButtonStyle.Danger)
+    );
+
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("#3ba55d")
+          .setTitle(`🎫 Ticket #${number}`)
+          .setDescription(`Hello <@${interaction.user.id}>, describe your issue.`)
+      ],
+      components: [buttons]
+    });
+
+    return interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
   }
-});
 
-// ADD MEMBER VIA MENTION
-client.on("messageCreate", async message => {
-  if (message.mentions.members.size > 0 && message.channel.name.startsWith("ticket-")) {
+  const isStaff = interaction.member?.roles.cache.has(STAFF_ROLE_ID);
 
-    const member = message.mentions.members.first();
+  /* CLAIM */
 
-    await message.channel.permissionOverwrites.edit(member.id, {
+  if (interaction.isButton() && interaction.customId === "claim") {
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.reply({ content: `🎯 Claimed by ${interaction.user}` });
+  }
+
+  /* RENAME */
+
+  if (interaction.isButton() && interaction.customId === "rename") {
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    const modal = new ModalBuilder()
+      .setCustomId("rename_modal")
+      .setTitle("Rename Ticket");
+
+    const input = new TextInputBuilder()
+      .setCustomId("new_name")
+      .setLabel("New Channel Name")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return interaction.showModal(modal);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === "rename_modal") {
+    const newName = interaction.fields.getTextInputValue("new_name");
+    await interaction.channel.setName(newName);
+    return interaction.reply({ content: "✅ Channel renamed.", ephemeral: true });
+  }
+
+  /* ADD MEMBER */
+
+  if (interaction.isButton() && interaction.customId === "add") {
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.reply({ content: "Mention the user you want to add.", ephemeral: true });
+
+    const filter = m => m.author.id === interaction.user.id;
+    const collected = await interaction.channel.awaitMessages({
+      filter,
+      max: 1,
+      time: 30000
+    });
+
+    const message = collected.first();
+    if (!message) return;
+
+    const mentioned = message.mentions.users.first();
+    if (!mentioned)
+      return interaction.followUp({ content: "❌ No user mentioned.", ephemeral: true });
+
+    await interaction.channel.permissionOverwrites.create(mentioned.id, {
       ViewChannel: true,
       SendMessages: true
     });
 
-    message.reply(`${member} added to ticket.`);
+    await interaction.followUp({ content: `✅ ${mentioned} added to ticket.` });
   }
+
+  /* CLOSE */
+
+  if (interaction.isButton() && interaction.customId === "close") {
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const messages = await interaction.channel.messages.fetch({ limit: 100 });
+
+    const transcript = messages.reverse().map(m =>
+      `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+    ).join("\n");
+
+    const file = new AttachmentBuilder(
+      Buffer.from(transcript, "utf-8"),
+      { name: "transcript.txt" }
+    );
+
+    const userId = interaction.channel.topic;
+    const user = await client.users.fetch(userId);
+
+    await user.send({ content: "📄 Your ticket transcript:", files: [file] }).catch(() => {});
+
+    if (LOG_CHANNEL_ID) {
+      const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID);
+      if (logChannel)
+        await logChannel.send({ content: `Ticket closed by ${interaction.user}`, files: [file] });
+    }
+
+    await interaction.channel.delete();
+  }
+
 });
 
 client.login(process.env.DISCORD_TOKEN);
