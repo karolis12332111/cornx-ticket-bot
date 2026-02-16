@@ -1,131 +1,152 @@
 require("dotenv").config();
-
 const {
   Client,
   GatewayIntentBits,
-  Partials,
-  EmbedBuilder,
+  PermissionsBitField,
+  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType,
-  PermissionFlagsBits,
+  StringSelectMenuBuilder,
+  EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  StringSelectMenuBuilder
+  AttachmentBuilder
 } = require("discord.js");
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
-  ],
-  partials: [Partials.Channel]
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID;
-const CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
+const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
 
-client.once("ready", () => {
+let ticketCounter = 0;
+
+client.once("ready", async () => {
   console.log(`🔥 ${client.user.tag} online`);
+
+  const guild = client.guilds.cache.first();
+
+  await guild.commands.create({
+    name: "panel",
+    description: "Open support panel"
+  });
 });
 
-client.on("messageCreate", async (message) => {
-  if (message.content === "!panel") {
+/* ================= MAIN ================= */
+
+client.on("interactionCreate", async interaction => {
+
+  /* PANEL */
+
+  if (interaction.isChatInputCommand()) {
 
     const embed = new EmbedBuilder()
-      .setColor("#2b2d31")
-      .setTitle("🛒 Purchase Setup")
-      .setDescription(
-`Select your payment option below then press Create Ticket.
+      .setColor("#5865F2")
+      .setTitle("🎫 Advanced Support System")
+      .setDescription(`
+━━━━━━━━━━━━━━━━━━━━━━
 
-**Supported Payments:**
-PayPal, Credit/Debit
+🛒 **Purchase**
+Buy products or services.
 
-**Gift Card Payments:**
-Amazon, Paysafecard, CryptoVoucher`
-      )
-      .setImage("https://i.imgur.com/8Km9tLL.png"); // gali pakeist į savo image
+🛠 **Support**
+Need help with something.
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("purchase")
-        .setLabel("Purchase")
-        .setStyle(ButtonStyle.Success),
+🚨 **Report**
+Report users or issues.
 
-      new ButtonBuilder()
-        .setCustomId("support")
-        .setLabel("Support")
-        .setStyle(ButtonStyle.Primary),
+━━━━━━━━━━━━━━━━━━━━━━
+Select a category below.
+`)
+      .setImage("https://images.unsplash.com/photo-1611605698323-b1e99cfd37ea?auto=format&fit=crop&w=1200&q=60")
+      .setFooter({ text: `${interaction.guild.name} • Professional Ticket System` });
 
-      new ButtonBuilder()
-        .setCustomId("other")
-        .setLabel("Other")
-        .setStyle(ButtonStyle.Secondary)
+    const menu = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("create_ticket")
+        .setPlaceholder("Choose category")
+        .addOptions([
+          { label: "Purchase", value: "purchase" },
+          { label: "Support", value: "support" },
+          { label: "Report", value: "report" }
+        ])
     );
 
-    message.channel.send({ embeds: [embed], components: [row] });
+    return interaction.reply({ embeds: [embed], components: [menu] });
   }
-});
 
-client.on("interactionCreate", async (interaction) => {
+  /* CREATE TICKET */
 
-  // CREATE TICKET
-  if (interaction.isButton() && ["purchase","support","other"].includes(interaction.customId)) {
+  if (interaction.isStringSelectMenu()) {
+
+    const existing = interaction.guild.channels.cache.find(
+      c => c.topic === interaction.user.id
+    );
+
+    if (existing)
+      return interaction.reply({ content: "❌ You already have an open ticket.", ephemeral: true });
+
+    ticketCounter++;
+    const number = String(ticketCounter).padStart(4, "0");
 
     const channel = await interaction.guild.channels.create({
-      name: `ticket-${interaction.user.username}`,
+      name: `ticket-${number}`,
       type: ChannelType.GuildText,
-      parent: CATEGORY_ID,
+      parent: TICKET_CATEGORY_ID || null,
+      topic: interaction.user.id,
       permissionOverwrites: [
-        {
-          id: interaction.guild.id,
-          deny: [PermissionFlagsBits.ViewChannel],
-        },
-        {
-          id: interaction.user.id,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-        },
-        {
-          id: STAFF_ROLE_ID,
-          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-        }
+        { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+        { id: STAFF_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
       ]
     });
 
-    const embed = new EmbedBuilder()
-      .setColor("Green")
-      .setTitle("🎫 Ticket Created")
-      .setDescription(`Hello ${interaction.user}, please describe your issue.`);
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("rename")
-        .setLabel("Rename")
-        .setStyle(ButtonStyle.Secondary),
-
-      new ButtonBuilder()
-        .setCustomId("add")
-        .setLabel("Add Member")
-        .setStyle(ButtonStyle.Primary),
-
-      new ButtonBuilder()
-        .setCustomId("close")
-        .setLabel("Close")
-        .setStyle(ButtonStyle.Danger)
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("claim").setLabel("Claim").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("rename").setLabel("Rename").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("add").setLabel("Add Member").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("close").setLabel("Close").setStyle(ButtonStyle.Danger)
     );
 
-    await channel.send({ embeds: [embed], components: [row] });
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("#3ba55d")
+          .setTitle(`🎫 Ticket #${number}`)
+          .setDescription(`Hello <@${interaction.user.id}>, describe your issue.`)
+      ],
+      components: [buttons]
+    });
 
-    interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
+    return interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
   }
 
-  // RENAME
+  const isStaff = interaction.member?.roles.cache.has(STAFF_ROLE_ID);
+
+  /* CLAIM */
+
+  if (interaction.isButton() && interaction.customId === "claim") {
+
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.reply({ content: `🎯 Claimed by ${interaction.user}` });
+  }
+
+  /* RENAME */
+
   if (interaction.isButton() && interaction.customId === "rename") {
-    if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) return;
+
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
 
     const modal = new ModalBuilder()
       .setCustomId("rename_modal")
@@ -134,36 +155,88 @@ client.on("interactionCreate", async (interaction) => {
     const input = new TextInputBuilder()
       .setCustomId("new_name")
       .setLabel("New Channel Name")
-      .setStyle(TextInputStyle.Short);
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
 
-    await interaction.showModal(modal);
+    return interaction.showModal(modal);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === "rename_modal") {
+
     const newName = interaction.fields.getTextInputValue("new_name");
     await interaction.channel.setName(newName);
-    interaction.reply({ content: "Renamed!", ephemeral: true });
+
+    return interaction.reply({ content: "✅ Renamed.", ephemeral: true });
   }
 
-  // ADD MEMBER
+  /* ADD MEMBER (CHAT MENTION SYSTEM) */
+
   if (interaction.isButton() && interaction.customId === "add") {
-    if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) return;
 
-    await interaction.reply({
-      content: "Ping the user you want to add.",
-      ephemeral: true
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.reply({ content: "Mention the user in chat now.", ephemeral: true });
+
+    const filter = m => m.author.id === interaction.user.id;
+    const collected = await interaction.channel.awaitMessages({
+      filter,
+      max: 1,
+      time: 30000
     });
+
+    const message = collected.first();
+    if (!message) return;
+
+    const mentioned = message.mentions.users.first();
+    if (!mentioned)
+      return interaction.followUp({ content: "❌ No user mentioned.", ephemeral: true });
+
+    await interaction.channel.permissionOverwrites.create(mentioned.id, {
+      ViewChannel: true,
+      SendMessages: true
+    });
+
+    await interaction.followUp({ content: `✅ ${mentioned} added to ticket.` });
   }
 
-  // CLOSE
+  /* CLOSE */
+
   if (interaction.isButton() && interaction.customId === "close") {
-    if (!interaction.member.roles.cache.has(STAFF_ROLE_ID)) return;
 
-    await interaction.reply("Closing ticket...");
-    setTimeout(() => interaction.channel.delete(), 3000);
+    if (!isStaff)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
+
+    await interaction.deferReply({ ephemeral: true });
+
+   const messages = await interaction.channel.messages.fetch({ limit: 100 });
+
+
+    const transcript = messages.reverse().map(m =>
+      `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+    ).join("\n");
+
+    const file = new AttachmentBuilder(
+      Buffer.from(transcript, "utf-8"),
+      { name: "transcript.txt" }
+    );
+
+    const userId = interaction.channel.topic;
+    const user = await client.users.fetch(userId);
+
+    await user.send({ content: "📄 Ticket Transcript:", files: [file] }).catch(() => {});
+
+    if (LOG_CHANNEL_ID) {
+      const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID);
+      if (logChannel)
+        await logChannel.send({ content: `Ticket closed by ${interaction.user}`, files: [file] });
+    }
+
+    await interaction.channel.delete();
   }
+
 });
 
 client.login(process.env.TOKEN);
